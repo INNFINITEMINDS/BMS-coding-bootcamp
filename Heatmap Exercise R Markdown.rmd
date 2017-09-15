@@ -1,0 +1,137 @@
+---
+title: "BMS Bootcamp Coding Workshop"
+author: "Emily Jones"
+date: "8 September 2016"
+output: html_document
+---
+<br>
+**Goal: Given an espression analysis in a paper, find the data and import it into R, find the method used for analysis and how to execute it in R, and recreate the figure.**
+
+### Find some data
+
+Open ["Transcriptome Profile of Human Colorectal Adenomas."](http://mcr.aacrjournals.org/content/5/12/1263.long) Go to figure 1A. What is the main point of this figure? How can you improve it?
+
+![Figure 1A](C:\Users\Emily\Dropbox\UCSF\Coding Bootcamp v2\fig1.png)
+
+On the next page, find highlighted in the caption a description of how this figure was created. 
+
+![Figure 1A caption](C:\Users\Emily\Dropbox\UCSF\Coding Bootcamp v2\fig1_caption.png)
+
+We are going to recreate this figure from scratch; but first, we'll need some information.
+<br>
+
+### Import your data
+
+The authors of this paper have kindly published their raw data. Open the [NCBI GEO DataSet Browser](http://www.ncbi.nlm.nih.gov/sites/GDSbrowser/). Search for the paper title to find the dataset. Locate the DataSet Record at the top of the page.
+
+![GDS Record](C:\Users\Emily\Dropbox\UCSF\Coding Bootcamp v2\GDS.png)
+
+You'll notice at the side of the page there is a "Download" section. That's promising, but the file formats are unfamiliar. What exactly is "SOFT" file, and how do we read it? Luckily, R will allow us to skip downloading or figuring out file formats all together. To see how we can parse a SOFT file in R, Google something like "open GEO SOFT files in R." One of the first few links is [a post written by a student at the University of Warwick](http://www2.warwick.ac.uk/fac/sci/moac/people/students/peter_cock/r/geo/), with a great explanation about what a GDS means and how to read it into R.
+
+Install GEOquery by starting Bioconductor and using the `biocLite()` command. Load the package with `library()` and use it to parse the GEO SOFT file into an R object.
+
+```{r results='hide', message=FALSE, warning=FALSE}
+#pull and parse the GEO SOFT file
+source("http://bioconductor.org/biocLite.R") #start bioconductor
+biocLite()
+biocLite("GEOquery") #install package that parses GEO SOFT files
+library(Biobase) #load packages
+library(GEOquery)
+cancer <- getGEO('GDS2947') #pull the SOFT file from GEO (may cause firewall alert)
+```
+<br>
+
+### Explore and clean your data
+
+Explore this data set with `str()`. It looks like it's samples from 32 patients, which each gave normal mucosa and adenoma samples. Each sample has results for 55,000 tests; what are these tests for? Can you find the same information using `Meta()`?
+
+```{r results="hide"}
+str(cancer) #not shown on this page
+```
+```{r}
+Meta(cancer)$sample_type #check out individual parts of the metadata
+Meta(cancer)$sample_count
+Meta(cancer)$description[1]
+```
+
+Look at a subset the raw data using `Table()` and accessing rows 1-10 and columns 1-10 using `[1:10,1:10]`.
+
+```{r} 
+  Table(cancer)[1:10,1:10]
+```
+
+It looks like if we just cut out the first two columns of strings, we'll get numbers. But do we? Check out what data type we're working with using `typeof()`. You'll also notice that some samples have expression values orders of magnitude higher than others. Let's divide each expression value by the average for that sample to even it out.
+
+```{r}
+cancer_trim <- Table(cancer)[,3:ncol(Table(cancer))] #cut out the text
+typeof(cancer_trim[1,1]) #is the data what we think it is?
+cancer_expr_data <- sapply(cancer_trim, as.numeric) #convert to numbers
+cancer_norm <- cancer_expr_data/rowMeans(cancer_expr_data) #normalize expression
+```
+<br>
+
+### Find the method, in the paper and in R
+
+Now, let's create the figure. It's a heatmap with hierarchical clustering. First, how do we make a hierarchical cluster in R? Google that, and you'll find a lovely built-in function called hclust, which will do everything for you. Read the [R manual documentation](https://stat.ethz.ch/R-manual/R-patched/library/stats/html/hclust.html) on this method.
+
+We'll need 2 pieces of information to run this function: a dissimilarity structure and a method. Fortunately, the authors explain in the materials and methods what we're supposed to use for each. Find it highlighted.
+
+![Analysis protocol in materials and methods section](C:\Users\Emily\Dropbox\UCSF\Coding Bootcamp v2\methods.png)
+
+Start with the method: Pearson. Googling "R Pearson correlation" reveals there is a function ["cor"](http://www.statmethods.net/stats/correlations.html) which takes the correlation function as its argument. Let's calculate the Pearson correlation across all samples, then check out the result using `head(cancer_cor)`.
+
+```{r results="hide"}
+cancer_cor <- cor(cancer_norm, method="pearson") #create similarity matrix of correlations
+head(cancer_cor)  #not shown on this page
+```
+<br>
+
+### Executing the hierarchical clustering
+
+How do we get from a similarity to a disimilarity matrix? By googling, of course! Search something like "similarity to distance matrix in R". You will find the answer nestled inside the infinite wisdom of [R blogs](http://onertipaday.blogspot.com/2007/04/from-similarity-to-distance-matrix.html), which suggests using the `sim2dist()` method from the RFLPtools package. Just as before, we'll need to install and load the package before we can use this function. Once we've used it, we can simiply plug in our distance matrix and our method (remember which one the methods said we should use?) into the `hclust()` method.
+
+```{r results='hide', message=FALSE, warning=FALSE}
+install.packages("RFLPtools", repos="http://cran.rstudio.com/") #install package to convert similarity matrix to distance matrix
+library("RFLPtools")
+cancer_dist <- sim2dist(cancer_cor) #calculate distance matrix for clustering
+cancer_clust <- hclust(cancer_dist, method="average") #hierarchical clustering
+```
+```{r}
+plot(cancer_clust) #take a look at our clustering
+```
+<br>
+
+### Plotting the heatmap
+
+Almost there! Now, we just need to make a heatmap, which a quick search will reveal is done using the obviously named method `heatmap()`. From here on, I have dressed up the code to make the plot look similar to the one in the paper. Feel free to read more about dressing up [heatmap plots](https://stat.ethz.ch/R-manual/R-patched/library/stats/html/heatmap.html), but you needn't understand exactly what the code is saying to get the idea. Just read the documentation if you are confused.
+
+```{r}
+#put the dendrogram on a heatmap
+cancer_dend <- as.dendrogram(cancer_clust) #save the clusters to a format we can plot later
+  #NA means I am hiding that item on the plot
+heatmap(cancer_norm[1:20,], Rowv=NA, Colv=cancer_dend, labRow=NA, labCol=NA) #plot a heatmap
+```
+
+Change this color scheme from a divergent one to a sequential one using RColorBrewer.
+
+```{r results="hide", , message=FALSE, warning=FALSE, fig.show="hide"}
+library(RColorBrewer)
+display.brewer.all()
+```
+
+![R Color Brewer](C:\Users\Emily\Dropbox\UCSF\Coding Bootcamp v2\color_brewer.png)
+
+```{r}
+heatmap(cancer_norm[1:20,], Rowv=NA, Colv=cancer_dend, labRow=NA, labCol=NA, col=brewer.pal(9,'Oranges')) #make the colormap better
+```
+
+Finally, let's add colors and labels for the different sample types (adenoma and normal mucosa). Again, if you'd like a challenge, try reading the code, otherwise just enjoy the final product.
+
+```{r}
+#jazz it up
+color.map <- function(disease_state) { if (disease_state=="adenoma") 'red' else 'blue' }
+group_colors <- unlist(lapply(Columns(cancer)$disease.state, color.map)) #assign a color based on sample type
+heatmap(cancer_norm[1:20,], Rowv=NA, Colv=cancer_dend, labRow=NA, labCol=NA, ylab="Probes", col=brewer.pal(9,'Oranges'), margins=c(5,2), main="", ColSideColors=group_colors)
+mtext("Samples", side=1, line=2)
+mtext("Fig 1. mRNA expression in colorectal mucosal & adenoma tissue", side=1, line=4) #improve margin spacing, add labels
+```
